@@ -3,7 +3,8 @@ import { createServer } from 'http';
 import cors from 'cors';
 import helmet from 'helmet';
 import { config } from 'dotenv';
-import { PORT, CORS_ORIGIN, NODE_ENV } from './config/env.js';
+import { PORT, NODE_ENV } from './config/env.js';
+import { corsOptions, getCorsOrigins } from './config/cors.js';
 import connectDB from './database/mongodb.js';
 import { globalLimiter, authLimiter } from './middlewares/rateLimiter.middleware.js';
 import { sanitizeInput, securityHeaders } from './middlewares/sanitize.middleware.js';
@@ -50,19 +51,8 @@ app.use(securityHeaders);
 app.use(loggerMiddleware);
 
 // ─── CORS ───────────────────────────────────────────────────────────
-const origins = CORS_ORIGIN
-  ? CORS_ORIGIN.split(',').map((o) => o.trim())
-  : ['http://localhost:5173', 'http://localhost:5174'];
-
-app.use(
-  cors({
-    origin: origins,
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-    maxAge: 86400,
-  })
-);
+const origins = getCorsOrigins();
+app.use(cors(corsOptions()));
 
 // ─── Body Parsing ───────────────────────────────────────────────────
 app.use(express.json({ limit: '10mb', strict: true }));

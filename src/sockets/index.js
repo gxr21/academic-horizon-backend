@@ -1,6 +1,7 @@
 import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
-import { JWT_SECRET, CORS_ORIGIN } from '../config/env.js';
+import { JWT_SECRET } from '../config/env.js';
+import { getCorsOrigins } from '../config/cors.js';
 import { registerChatHandlers } from './chat.handler.js';
 import { setIO } from './io.js';
 import User from '../models/User.js';
@@ -10,7 +11,7 @@ import { evaluateRestriction, restrictionMessage } from '../utils/restriction.js
  * Initialize Socket.io with JWT authentication.
  */
 export const initializeSocket = (httpServer) => {
-  const origins = CORS_ORIGIN ? CORS_ORIGIN.split(',').map((o) => o.trim()) : ['http://localhost:5173'];
+  const origins = getCorsOrigins();
 
   const io = new Server(httpServer, {
     cors: {

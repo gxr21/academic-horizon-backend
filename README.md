@@ -17,3 +17,6 @@ npm run dev
 - Root: مجلد هذا المستودع
 - Start: `node src/server.js`
 - أضف متغيرات البيئة من `.env.example` مع `NODE_ENV=production`
+- `CORS_ORIGIN` يجب أن يشمل عنوان الواجهة الحالي، مثلاً:
+  `https://academic-horizon-frontend.onrender.com,https://academichorizonapp.fyi,https://www.academichorizonapp.fyi`
+- `FRONTEND_URL` عنوان الواجهة (روابط الإيميل)، حالياً `https://academic-horizon-frontend.onrender.com`
