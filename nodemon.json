@@ -1,0 +1,5 @@
+{
+  "watch": ["src", ".env.development.local"],
+  "ext": "js,json,mjs",
+  "ignore": ["uploads/*", "node_modules/*", "tmp-*"]
+}

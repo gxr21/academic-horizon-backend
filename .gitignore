@@ -1,0 +1,38 @@
+# المكتبات (حجمها ضخم جداً وما تترفع)
+node_modules/
+
+# الملفات السرية (كلمات السر ورابط القاعدة)
+.env
+
+# ملفات الرفع (أبحاث وتقارير الطلاب التجريبية)
+uploads/
+
+# ملفات النظام واللوغات
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+dist/
+build/
+
+# ملفات البيئة الإضافية
+.env.local
+.env.production.local
+*.local
+
+# ملفات Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ملفات TypeScript/JavaScript المجمعة (إن وجدت)
+*.tsbuildinfo
+
+# مجلد coverage للتست
+coverage/
+
+# ملفات مؤقتة
+tmp/
+temp/
