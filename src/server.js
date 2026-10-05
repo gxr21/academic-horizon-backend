@@ -33,6 +33,7 @@ import walletRoutes from './routes/wallet.routes.js';
 // Create Express app and HTTP server
 const app = express();
 const httpServer = createServer(app);
+app.set('trust proxy', 1);
 
 // ─── Request ID (first — before any other middleware) ───────────────
 app.use(requestIdMiddleware);
@@ -68,12 +69,7 @@ app.use(
     mode: 'block',
     rate_limit: {
       windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 min
-      // Dashboards, notifications and chat make many small requests, so 100 per 15 min
-      // is too tight for real use. In development we allow a much higher ceiling.
-      max:
-        NODE_ENV === 'production'
-          ? parseInt(process.env.RATE_LIMIT_MAX) || 100
-          : Math.max(parseInt(process.env.RATE_LIMIT_MAX) || 100, 3000),
+      max: Math.max(parseInt(process.env.RATE_LIMIT_MAX) || 2000, 2000),
     },
   })
 );

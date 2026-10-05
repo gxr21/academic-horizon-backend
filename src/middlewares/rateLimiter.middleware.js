@@ -27,7 +27,7 @@ export const globalLimiter = rateLimit({
  */
 export const authLimiter = rateLimit({
   windowMs: parseInt(RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
-  max: parseInt(AUTH_RATE_LIMIT_MAX) || 10,
+  max: parseInt(AUTH_RATE_LIMIT_MAX) || 30,
   message: {
     success: false,
     error: {

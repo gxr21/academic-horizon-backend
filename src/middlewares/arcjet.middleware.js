@@ -59,6 +59,7 @@ export const arcjetMiddleware = (options = {}) => {
 
   return (req, res, next) => {
     if (!enabled) return next();
+    if (req.method === 'OPTIONS' || req.path === '/api/health') return next();
 
     try {
       const clientIP = (req.ip || req.connection.remoteAddress || '0.0.0.0').split(',')[0].trim();
