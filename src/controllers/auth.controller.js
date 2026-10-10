@@ -36,6 +36,23 @@ export const login = async (req, res) => {
 };
 
 /**
+ * POST /api/auth/google
+ */
+export const googleLogin = async (req, res) => {
+  try {
+    const result = await authService.loginWithGoogle(req.body);
+    return sendSuccess(res, result, 'Login successful', result.isNew ? 201 : 200);
+  } catch (error) {
+    return sendError(
+      res,
+      error.code || 'GOOGLE_LOGIN_FAILED',
+      error.message,
+      error.statusCode || 500
+    );
+  }
+};
+
+/**
  * GET /api/auth/me
  */
 export const getMe = async (req, res) => {

@@ -28,9 +28,30 @@ const userSchema = new mongoose.Schema(
     },
     password: {
       type: String,
-      required: [true, 'Password is required'],
+      // Accounts created through Google sign-in have no password until they set one
+      required: [
+        function () {
+          return !this.google_id;
+        },
+        'Password is required',
+      ],
       minlength: [6, 'Password must be at least 6 characters'],
       select: false, // Never return password by default
+    },
+    // Google account id ("sub"); proves the email belongs to this person
+    google_id: {
+      type: String,
+      unique: true,
+      sparse: true,
+      select: false,
+    },
+    email_verified: {
+      type: Boolean,
+      default: false,
+    },
+    email_verified_at: {
+      type: Date,
+      default: null,
     },
     role: {
       type: String,
@@ -142,6 +163,11 @@ const userSchema = new mongoose.Schema(
         ret.gender = doc.gender || 'unspecified';
         ret.walletBalance = doc.wallet_balance || 0;
         ret.createdAt = doc.created_at;
+        ret.emailVerified = !!doc.email_verified;
+        ret.emailVerifiedAt = doc.email_verified_at || null;
+        delete ret.email_verified;
+        delete ret.email_verified_at;
+        delete ret.google_id;
         delete ret.wallet_balance;
         delete ret._id;
         delete ret.__v;
@@ -210,6 +236,8 @@ userSchema.pre('findOneAndDelete', async function () {
  * Compare password method
  */
 userSchema.methods.comparePassword = async function (candidatePassword) {
+  // Google-only accounts have no stored password to compare with
+  if (!this.password || !candidatePassword) return false;
   return await bcrypt.compare(candidatePassword, this.password);
 };
 

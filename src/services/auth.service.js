@@ -1,7 +1,9 @@
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
+import { OAuth2Client } from 'google-auth-library';
 import User from '../models/User.js';
 import { JWT_SECRET, JWT_EXPIRES_IN } from '../config/env.js';
+import { getGoogleClientId } from '../config/google.js';
 import { getFrontendUrl } from '../config/frontend.js';
 import { notifyRole } from './notification.service.js';
 import { sendPasswordResetEmail } from './email.service.js';
@@ -96,6 +98,12 @@ export const login = async ({ email, password }) => {
     throw new UnauthorizedError('Account is deactivated');
   }
 
+  if (!user.password) {
+    throw new UnauthorizedError(
+      'هذا الحساب مسجّل عبر Google. ادخل بزر Google، أو اختر «نسيت كلمة المرور» لتعيين كلمة مرور.'
+    );
+  }
+
   const isMatch = await user.comparePassword(password);
   if (!isMatch) {
     throw new UnauthorizedError('Invalid email or password');
@@ -111,6 +119,98 @@ export const login = async ({ email, password }) => {
   return {
     token,
     user: user.toJSON(),
+  };
+};
+
+const googleClient = new OAuth2Client();
+
+const cleanDisplayName = (rawName, email) => {
+  let name = String(rawName || '').replace(/[<>]/g, '').trim();
+  if (name.length < 3) name = String(email).split('@')[0];
+  if (name.length < 3) name = `${name}___`.slice(0, 3);
+  return name.slice(0, 50);
+};
+
+/**
+ * Sign in (or sign up) with a Google ID token.
+ * Google signs the token, so the email inside it is proven to belong to the visitor.
+ */
+export const loginWithGoogle = async ({ credential }) => {
+  let payload;
+  try {
+    const ticket = await googleClient.verifyIdToken({
+      idToken: credential,
+      audience: getGoogleClientId(),
+    });
+    payload = ticket.getPayload();
+  } catch (error) {
+    console.warn('Google token rejected:', error.message);
+    throw new UnauthorizedError('تعذر التحقق من حساب Google. حاول مرة أخرى.');
+  }
+
+  if (!payload?.sub || !payload.email || payload.email_verified !== true) {
+    throw new UnauthorizedError('بريد Google هذا غير موثّق، لذلك لا يمكن استخدامه.');
+  }
+
+  const email = payload.email.trim().toLowerCase();
+  const googleId = payload.sub;
+
+  let user = await User.findOne({ $or: [{ google_id: googleId }, { email }] }).select('+google_id');
+  let isNew = false;
+
+  if (!user) {
+    if (email.endsWith(getProviderEmailDomain())) {
+      throw new ValidationError('Students cannot use provider email domains');
+    }
+
+    user = await User.create({
+      name: cleanDisplayName(payload.name, email),
+      email,
+      google_id: googleId,
+      email_verified: true,
+      email_verified_at: new Date(),
+      avatar_url: payload.picture || null,
+      role: 'student',
+    });
+    isNew = true;
+
+    await notifyRole('admin', {
+      type: 'new_user',
+      title: 'طالب جديد',
+      message: `انضم ${user.name} (${email}) عبر Google.`,
+    });
+  } else {
+    if (!user.is_active) {
+      throw new UnauthorizedError('Account is deactivated');
+    }
+
+    if (user.google_id && user.google_id !== googleId) {
+      throw new UnauthorizedError('هذا البريد مرتبط بحساب Google آخر.');
+    }
+
+    const restriction = await evaluateRestriction(user);
+    if (restriction.restricted) {
+      throw new RestrictedError(restrictionMessage(restriction));
+    }
+
+    // Link the Google account and mark the email as verified
+    let changed = false;
+    if (!user.google_id) {
+      user.google_id = googleId;
+      changed = true;
+    }
+    if (!user.email_verified) {
+      user.email_verified = true;
+      user.email_verified_at = new Date();
+      changed = true;
+    }
+    if (changed) await user.save({ validateBeforeSave: false });
+  }
+
+  return {
+    token: generateToken(user),
+    user: user.toJSON(),
+    isNew,
   };
 };
 

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   register,
   login,
+  googleLogin,
   getMe,
   forgotPassword,
   resetPassword,
@@ -10,7 +11,13 @@ import {
 import { authenticate } from '../middlewares/auth.middleware.js';
 import { validate } from '../middlewares/validate.middleware.js';
 import { authLimiter } from '../middlewares/rateLimiter.middleware.js';
-import { registerSchema, loginSchema, forgotPasswordSchema, resetPasswordSchema } from '../validators/auth.validator.js';
+import {
+  registerSchema,
+  loginSchema,
+  googleLoginSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+} from '../validators/auth.validator.js';
 
 const router = Router();
 
@@ -19,6 +26,9 @@ router.post('/register', authLimiter, validate(registerSchema), register);
 
 // POST /api/auth/login
 router.post('/login', authLimiter, validate(loginSchema), login);
+
+// POST /api/auth/google — sign in / sign up with a Google ID token
+router.post('/google', authLimiter, validate(googleLoginSchema), googleLogin);
 
 // GET /api/auth/me
 router.get('/me', authenticate, getMe);

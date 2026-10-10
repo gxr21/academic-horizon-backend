@@ -33,6 +33,14 @@ export const loginSchema = z.object({
     .min(1, 'Password is required'),
 });
 
+export const googleLoginSchema = z.object({
+  credential: z
+    .string({ required_error: 'Google credential is required' })
+    .trim()
+    .min(20, 'Invalid Google credential')
+    .max(4096, 'Invalid Google credential'),
+});
+
 export const forgotPasswordSchema = z.object({
   email: z
     .string({ required_error: 'Email is required' })
