@@ -1,5 +1,6 @@
 import { Resend } from 'resend';
-import { RESEND_API_KEY, RESEND_FROM_EMAIL, FRONTEND_URL } from '../config/env.js';
+import { RESEND_API_KEY, RESEND_FROM_EMAIL } from '../config/env.js';
+import { getFrontendUrl } from '../config/frontend.js';
 import { buildProviderWelcomeEmail } from '../emails/providerWelcome.js';
 import { buildPasswordResetEmail } from '../emails/passwordReset.js';
 
@@ -46,7 +47,7 @@ export const sendProviderWelcomeEmail = async ({ name, email, password }) => {
     return { sent: false, reason: 'أضف RESEND_API_KEY في ملف البيئة ثم أعد تشغيل السيرفر.' };
   }
 
-  const loginUrl = `${(FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '')}/login`;
+  const loginUrl = `${getFrontendUrl()}/login`;
   const { subject, html, text } = buildProviderWelcomeEmail({ name, email, loginUrl, password });
 
   try {

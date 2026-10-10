@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
-import { JWT_SECRET, JWT_EXPIRES_IN, FRONTEND_URL } from '../config/env.js';
+import { JWT_SECRET, JWT_EXPIRES_IN } from '../config/env.js';
+import { getFrontendUrl } from '../config/frontend.js';
 import { notifyRole } from './notification.service.js';
 import { sendPasswordResetEmail } from './email.service.js';
 import {
@@ -140,9 +141,36 @@ export const forgotPassword = async (email) => {
   user.password_reset_expires = new Date(Date.now() + 60 * 60 * 1000);
   await user.save({ validateBeforeSave: false });
 
-  const resetUrl = `${(FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '')}/reset-password?token=${rawToken}`;
+  const resetUrl = `${getFrontendUrl()}/reset-password?token=${rawToken}`;
   await sendPasswordResetEmail({ name: user.name, email: user.email, resetUrl });
   return { queued: true };
+};
+
+const maskEmail = (email = '') => {
+  const [local = '', domain = ''] = String(email).split('@');
+  const visible = local.slice(0, Math.min(2, local.length));
+  return `${visible}${'*'.repeat(Math.max(local.length - visible.length, 3))}@${domain}`;
+};
+
+const INVALID_RESET_MESSAGE = 'رابط إعادة التعيين غير صالح أو منتهٍ. اطلب رابطاً جديداً.';
+
+/**
+ * Lets the reset page tell the visitor straight away whether the link still works.
+ */
+export const verifyResetToken = async (token) => {
+  const user = await User.findOne({
+    password_reset_token: hashResetToken(String(token || '').trim()),
+    password_reset_expires: { $gt: new Date() },
+  }).select('+password_reset_token +password_reset_expires');
+
+  if (!user || !user.is_active) {
+    throw new ValidationError(INVALID_RESET_MESSAGE);
+  }
+
+  return {
+    email: maskEmail(user.email),
+    expiresAt: user.password_reset_expires,
+  };
 };
 
 export const resetPassword = async ({ token, password }) => {
@@ -153,7 +181,7 @@ export const resetPassword = async ({ token, password }) => {
   }).select('+password +password_reset_token +password_reset_expires');
 
   if (!user) {
-    throw new ValidationError('رابط إعادة التعيين غير صالح أو منتهٍ. اطلب رابطاً جديداً.');
+    throw new ValidationError(INVALID_RESET_MESSAGE);
   }
 
   user.password = password;

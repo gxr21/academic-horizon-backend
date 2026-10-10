@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import { config } from 'dotenv';
 import { PORT, NODE_ENV } from './config/env.js';
 import { corsOptions, getCorsOrigins } from './config/cors.js';
+import { getRedirectFrontendUrl } from './config/frontend.js';
 import connectDB from './database/mongodb.js';
 import { globalLimiter, authLimiter } from './middlewares/rateLimiter.middleware.js';
 import { sanitizeInput, securityHeaders } from './middlewares/sanitize.middleware.js';
@@ -125,6 +126,15 @@ app.get('/api', (req, res) => {
       },
     },
   });
+});
+
+// ─── Frontend pages opened on the API host ──────────────────────────
+// While the domain still points at this service, links from emails
+// (e.g. /reset-password?token=...) land here. Send browsers to the real app.
+app.get(['/reset-password', '/forgot-password', '/login', '/signup'], (req, res, next) => {
+  if (req.accepts(['json', 'html']) !== 'html') return next();
+  const target = getRedirectFrontendUrl(req.get('host'));
+  return res.redirect(302, `${target}${req.originalUrl}`);
 });
 
 // ─── 404 Handler ────────────────────────────────────────────────────

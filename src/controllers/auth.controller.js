@@ -70,6 +70,21 @@ export const forgotPassword = async (req, res) => {
   }
 };
 
+export const verifyResetToken = async (req, res) => {
+  try {
+    const token = typeof req.query.token === 'string' ? req.query.token : '';
+    const result = await authService.verifyResetToken(token);
+    return sendSuccess(res, result);
+  } catch (error) {
+    return sendError(
+      res,
+      error.code || 'RESET_LINK_INVALID',
+      error.message,
+      error.statusCode || 400
+    );
+  }
+};
+
 export const resetPassword = async (req, res) => {
   try {
     await authService.resetPassword(req.body);
