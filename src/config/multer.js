@@ -54,4 +54,21 @@ export const uploadDocuments = multer({
   limits: { ...limits, files: 5 },
 });
 
+/**
+ * Payment receipts: a single small image kept in memory (it is stored in the database,
+ * never on disk). The real file type is checked again from the bytes in the payment service.
+ */
+export const RECEIPT_MAX_BYTES = 3 * 1024 * 1024;
+
+export const uploadReceipt = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: RECEIPT_MAX_BYTES, files: 1 },
+  fileFilter: (req, file, cb) => {
+    if (!/^image\/(jpeg|png|webp)$/.test(file.mimetype)) {
+      return cb(new ValidationError('ارفع صورة الإيصال بصيغة JPG أو PNG أو WEBP فقط'), false);
+    }
+    cb(null, true);
+  },
+});
+
 export default upload;

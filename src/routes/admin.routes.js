@@ -230,7 +230,7 @@ router.get('/orders', authenticate, authorize(ROLES.ADMIN), async (req, res) => 
  */
 router.get('/stats', authenticate, authorize(ROLES.ADMIN), async (req, res) => {
   try {
-    const [students, providers, statusRows, pendingReports, restrictedStudents, pendingProfileChanges, pendingWithdrawals, platform] = await Promise.all([
+    const [students, providers, statusRows, pendingReports, restrictedStudents, pendingProfileChanges, pendingWithdrawals, platform, pendingPayments] = await Promise.all([
       User.countDocuments({ role: ROLES.STUDENT }),
       User.countDocuments({ role: ROLES.PROVIDER, approval_status: { $nin: ['pending', 'rejected'] } }),
       Order.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
@@ -239,6 +239,7 @@ router.get('/stats', authenticate, authorize(ROLES.ADMIN), async (req, res) => {
       ProfileChangeRequest.countDocuments({ status: 'pending' }),
       Withdrawal.countDocuments({ status: 'pending' }),
       getPlatformSettings(),
+      Order.countDocuments({ payment_status: 'review' }),
     ]);
 
     const byStatus = statusRows.reduce((acc, row) => {
@@ -258,6 +259,7 @@ router.get('/stats', authenticate, authorize(ROLES.ADMIN), async (req, res) => {
       restrictedStudents,
       pendingProfileChanges,
       pendingWithdrawals,
+      pendingPayments,
       platformBalance: platform.wallet_balance || 0,
       commissionPercent: platform.commission_percent,
       byStatus,

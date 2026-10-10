@@ -19,6 +19,7 @@ import {
 } from '../utils/constants.js';
 import { notifyUsers, notifyRole } from './notification.service.js';
 import { snapshotForPrice, settleDeliveredOrder } from './wallet.service.js';
+import { PAID_STATUSES } from './payment.service.js';
 
 /**
  * Create a new order (student only).
@@ -69,6 +70,7 @@ export const createOrder = async (studentId, data) => {
     serviceId = service._id;
   }
 
+  const needsPayment = (price || 0) > 0;
   const snapshot = await snapshotForPrice(price || 0);
   const order = await Order.create({
     title,
@@ -82,26 +84,37 @@ export const createOrder = async (studentId, data) => {
     service_id: serviceId,
     student_id: studentId,
     status: ORDER_STATUS.PENDING,
-    payment_status: 'reserved',
-    payment_method: 'mastercard',
+    // A priced order stays hidden from providers until the admin confirms the transfer.
+    // Free ("price agreed in chat") orders have nothing to pay, so they open straight away.
+    payment_status: needsPayment ? 'unpaid' : 'reserved',
+    payment_method: needsPayment ? 'transfer' : 'none',
     payment_agreed_at: new Date(),
   });
 
   // Notifications (best effort — never block the order)
-  await Promise.all([
-    notifyUsers([studentId], {
+  if (needsPayment) {
+    await notifyUsers([studentId], {
       type: 'order_created',
-      title: 'تم شراء الخدمة',
-      message: `تم شراء "${order.title}" بمبلغ ${order.price || 0} دينار. سيُستقطع المبلغ من بطاقة ماستركارد الخاصة بك، والطلب بانتظار قبول مزود الخدمة.`,
+      title: 'أكمل الدفع لتفعيل طلبك',
+      message: `تم إنشاء طلب "${order.title}" بمبلغ ${order.price} دينار. حوّل المبلغ ثم ارفع صورة الإيصال ليُفعَّل الطلب ويصل للمزودين.`,
       orderId: order._id,
-    }),
-    notifyRole(ROLES.PROVIDER, {
-      type: 'new_order',
-      title: 'طلب جديد',
-      message: `طلب جديد من ${student.name}: ${order.title}`,
-      orderId: order._id,
-    }),
-  ]);
+    });
+  } else {
+    await Promise.all([
+      notifyUsers([studentId], {
+        type: 'order_created',
+        title: 'تم إنشاء طلبك',
+        message: `تم إنشاء "${order.title}" وهو بانتظار قبول مزود الخدمة.`,
+        orderId: order._id,
+      }),
+      notifyRole(ROLES.PROVIDER, {
+        type: 'new_order',
+        title: 'طلب جديد',
+        message: `طلب جديد من ${student.name}: ${order.title}`,
+        orderId: order._id,
+      }),
+    ]);
+  }
 
   return order.toJSON();
 };
@@ -135,15 +148,17 @@ export const getOrders = async (userId, role, { page = 1, limit = 10, status, sc
   if (role === ROLES.STUDENT) {
     query.student_id = userId;
   } else if (role === ROLES.PROVIDER) {
+    // Providers only ever see incoming orders whose payment the admin has confirmed
     if (scope === 'available') {
       query.status = ORDER_STATUS.PENDING;
       query.provider_id = null;
+      query.payment_status = { $in: PAID_STATUSES };
     } else if (scope === 'mine') {
       query.provider_id = userId;
     } else {
       query.$or = [
         { provider_id: userId },
-        { status: ORDER_STATUS.PENDING, provider_id: null },
+        { status: ORDER_STATUS.PENDING, provider_id: null, payment_status: { $in: PAID_STATUSES } },
       ];
     }
   }
@@ -258,7 +273,12 @@ export const acceptOrder = async (orderId, providerId) => {
   }
 
   const order = await Order.findOneAndUpdate(
-    { _id: orderId, status: ORDER_STATUS.PENDING, provider_id: null },
+    {
+      _id: orderId,
+      status: ORDER_STATUS.PENDING,
+      provider_id: null,
+      payment_status: { $in: PAID_STATUSES },
+    },
     { provider_id: providerId, status: ORDER_STATUS.IN_PROGRESS },
     { new: true }
   );
@@ -266,6 +286,9 @@ export const acceptOrder = async (orderId, providerId) => {
   if (!order) {
     const exists = await Order.findById(orderId);
     if (!exists) throw new NotFoundError('Order');
+    if (!PAID_STATUSES.includes(exists.payment_status)) {
+      throw new ConflictError('This order is not available yet');
+    }
     throw new ConflictError('This order was already taken or is no longer available');
   }
 
@@ -322,13 +345,34 @@ export const updateOrderStatus = async (orderId, newStatus, userId, role, note =
     );
   }
 
+  // Work cannot start on an order whose money the platform has not received
+  if (
+    previousStatus === ORDER_STATUS.PENDING &&
+    newStatus !== ORDER_STATUS.CANCELLED &&
+    !PAID_STATUSES.includes(order.payment_status)
+  ) {
+    throw new ValidationError('لا يمكن بدء الطلب قبل تأكيد الدفع');
+  }
+
   order.status = newStatus;
+  const refundDue =
+    newStatus === ORDER_STATUS.CANCELLED && PAID_STATUSES.includes(order.payment_status);
   if (previousStatus === ORDER_STATUS.COMPLETED && newStatus === ORDER_STATUS.IN_PROGRESS) {
     order.review_note = note || ''; // admin sent the order back to the provider
   } else if (newStatus === ORDER_STATUS.DELIVERED) {
     order.review_note = '';
   }
   await order.save();
+
+  if (refundDue) {
+    // The student already paid: the admin has to send the money back by hand
+    await notifyRole(ROLES.ADMIN, {
+      type: 'refund_due',
+      title: 'طلب مدفوع أُلغي — استرجاع مطلوب',
+      message: `أُلغي الطلب "${order.title}" بعد دفع ${order.price || 0} دينار (رمز ${order._id.toString().slice(-6).toUpperCase()}). أعد المبلغ للطالب.`,
+      orderId: order._id,
+    });
+  }
 
   if (newStatus === ORDER_STATUS.DELIVERED) {
     await settleDeliveredOrder(order);
@@ -420,6 +464,9 @@ export const assignProvider = async (orderId, providerId) => {
   if (!provider) throw new NotFoundError('Provider');
   if (provider.role !== ROLES.PROVIDER) {
     throw new ValidationError('User is not a provider');
+  }
+  if (!PAID_STATUSES.includes(order.payment_status)) {
+    throw new ValidationError('لا يمكن تعيين مزود قبل تأكيد دفع الطلب');
   }
 
   order.provider_id = providerId;

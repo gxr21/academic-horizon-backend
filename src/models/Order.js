@@ -55,17 +55,64 @@ const orderSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    // unpaid   → waiting for the student's transfer
+    // review   → receipt uploaded, waiting for the admin to check the money arrived
+    // reserved → admin confirmed the money (providers can now see / take the order)
+    // collected→ reserved for future use (kept for older data)
     payment_status: {
       type: String,
-      enum: ['unpaid', 'reserved', 'collected'],
+      enum: ['unpaid', 'review', 'reserved', 'collected'],
       default: 'unpaid',
     },
     payment_method: {
       type: String,
-      enum: ['none', 'mastercard'],
+      enum: ['none', 'mastercard', 'transfer'],
       default: 'none',
     },
+    // Which wallet the student paid through (zaincash, qi, ...)
+    payment_channel: {
+      type: String,
+      trim: true,
+      maxlength: 40,
+      default: '',
+    },
     payment_agreed_at: {
+      type: Date,
+      default: null,
+    },
+    payment_confirmed_at: {
+      type: Date,
+      default: null,
+    },
+    // Admin's reason when a receipt is rejected
+    payment_note: {
+      type: String,
+      trim: true,
+      maxlength: 500,
+      default: '',
+    },
+    // The transfer receipt lives in the database (Render's disk is wiped on every deploy)
+    receipt_data: {
+      type: Buffer,
+      select: false,
+      default: undefined,
+    },
+    receipt_mime: {
+      type: String,
+      default: '',
+    },
+    receipt_size: {
+      type: Number,
+      default: 0,
+    },
+    receipt_hash: {
+      type: String,
+      select: false,
+      index: true,
+      sparse: true,
+      default: undefined,
+    },
+    receipt_uploaded_at: {
       type: Date,
       default: null,
     },
@@ -130,6 +177,13 @@ const orderSchema = new mongoose.Schema(
         ret.paymentStatus = doc.payment_status || 'unpaid';
         ret.paymentMethod = doc.payment_method || 'none';
         ret.paymentAgreedAt = doc.payment_agreed_at || null;
+        ret.paymentChannel = doc.payment_channel || '';
+        ret.paymentNote = doc.payment_note || '';
+        ret.paymentConfirmedAt = doc.payment_confirmed_at || null;
+        ret.hasReceipt = Boolean(doc.receipt_mime);
+        ret.receiptUploadedAt = doc.receipt_uploaded_at || null;
+        // Short code the student writes next to the transfer so the admin can match it
+        ret.paymentReference = doc._id.toString().slice(-6).toUpperCase();
         ret.createdAt = doc.created_at;
         ret.updatedAt = doc.updated_at;
         // Add populated user objects as nested objects if present
@@ -157,6 +211,14 @@ const orderSchema = new mongoose.Schema(
         delete ret.payment_status;
         delete ret.payment_method;
         delete ret.payment_agreed_at;
+        delete ret.payment_channel;
+        delete ret.payment_note;
+        delete ret.payment_confirmed_at;
+        delete ret.receipt_data;
+        delete ret.receipt_mime;
+        delete ret.receipt_size;
+        delete ret.receipt_hash;
+        delete ret.receipt_uploaded_at;
         return ret;
       },
     },

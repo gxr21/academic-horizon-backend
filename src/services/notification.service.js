@@ -45,7 +45,10 @@ export const notifyUsers = async (userIds, { type, title, message = '', orderId 
 export const notifyRole = async (role, payload, excludeUserIds = []) => {
   try {
     const exclude = new Set(excludeUserIds.filter(Boolean).map((id) => id.toString()));
-    const users = await User.find({ role, is_active: { $ne: false } }).select('_id');
+    const filter = { role, is_active: { $ne: false } };
+    // Providers still waiting for approval cannot sign in, so they get nothing
+    if (role === 'provider') filter.approval_status = { $nin: ['pending', 'rejected'] };
+    const users = await User.find(filter).select('_id');
     const ids = users.map((u) => u._id.toString()).filter((id) => !exclude.has(id));
     return await notifyUsers(ids, payload);
   } catch (error) {

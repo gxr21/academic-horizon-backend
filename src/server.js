@@ -30,6 +30,7 @@ import notificationRoutes from './routes/notification.routes.js';
 import reportRoutes from './routes/report.routes.js';
 import profileChangeRoutes from './routes/profileChange.routes.js';
 import walletRoutes from './routes/wallet.routes.js';
+import paymentRoutes from './routes/payment.routes.js';
 
 // Create Express app and HTTP server
 const app = express();
@@ -104,6 +105,7 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/profile-changes', profileChangeRoutes);
 app.use('/api/wallet', walletRoutes);
+app.use('/api/payments', paymentRoutes);
 
 // ─── API Root (info) ────────────────────────────────────────────────
 app.get('/api', (req, res) => {
