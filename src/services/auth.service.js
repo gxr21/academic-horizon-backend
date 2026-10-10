@@ -228,7 +228,7 @@ export const resendVerification = async (email) => {
 /**
  * Login an existing user.
  */
-export const login = async ({ email, password }) => {
+export const login = async ({ email, password, role: requestedRole }) => {
   // Find user and include password for comparison
   const user = await User.findOne({ email }).select('+password +google_id');
 
@@ -251,7 +251,16 @@ export const login = async ({ email, password }) => {
     throw new UnauthorizedError('Invalid email or password');
   }
 
-  // Checked after the password so strangers cannot tell which emails exist
+  // Checked after the password so strangers cannot tell which emails exist.
+  // The provider tab only admits provider accounts.
+  if (requestedRole === 'provider' && user.role !== 'provider') {
+    throw new AppError(
+      'هذا الحساب غير مسجّل كمزود خدمة. استخدم تبويب «طالب» للدخول.',
+      403,
+      'NOT_A_PROVIDER'
+    );
+  }
+
   if (isAwaitingVerification(user)) {
     throw new AppError(
       'لم يتم تأكيد بريدك الإلكتروني بعد. افتح الرابط الذي أرسلناه إلى بريدك، أو اطلب رابطاً جديداً.',

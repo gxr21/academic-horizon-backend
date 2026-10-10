@@ -37,6 +37,8 @@ export const loginSchema = z.object({
   password: z
     .string({ required_error: 'Password is required' })
     .min(1, 'Password is required'),
+  // The tab selected on the login page
+  role: z.enum(['student', 'provider']).optional(),
 });
 
 export const googleLoginSchema = z.object({
