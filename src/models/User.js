@@ -53,6 +53,27 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    // True only for accounts that signed up with the form: they cannot log in until the
+    // emailed link is opened. Older accounts do not have this flag, so they keep working.
+    email_verification_required: {
+      type: Boolean,
+      default: false,
+    },
+    email_verification_token: {
+      type: String,
+      select: false,
+      default: null,
+    },
+    email_verification_expires: {
+      type: Date,
+      select: false,
+      default: null,
+    },
+    email_verification_sent_at: {
+      type: Date,
+      select: false,
+      default: null,
+    },
     role: {
       type: String,
       enum: {
@@ -168,6 +189,10 @@ const userSchema = new mongoose.Schema(
         delete ret.email_verified;
         delete ret.email_verified_at;
         delete ret.google_id;
+        delete ret.email_verification_required;
+        delete ret.email_verification_token;
+        delete ret.email_verification_expires;
+        delete ret.email_verification_sent_at;
         delete ret.wallet_balance;
         delete ret._id;
         delete ret.__v;

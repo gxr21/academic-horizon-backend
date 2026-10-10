@@ -7,7 +7,7 @@ import { sendSuccess, sendError } from '../utils/response.js';
 export const register = async (req, res) => {
   try {
     const result = await authService.register(req.body);
-    return sendSuccess(res, result, 'Registration successful', 201);
+    return sendSuccess(res, result, 'Registration successful. Please confirm your email.', 201);
   } catch (error) {
     return sendError(
       res,
@@ -63,6 +63,38 @@ export const getMe = async (req, res) => {
     return sendError(
       res,
       error.code || 'FETCH_FAILED',
+      error.message,
+      error.statusCode || 500
+    );
+  }
+};
+
+export const verifyEmail = async (req, res) => {
+  try {
+    const result = await authService.verifyEmail(req.body.token);
+    return sendSuccess(res, result, 'تم تأكيد بريدك الإلكتروني');
+  } catch (error) {
+    return sendError(
+      res,
+      error.code || 'VERIFY_FAILED',
+      error.message,
+      error.statusCode || 500
+    );
+  }
+};
+
+export const resendVerification = async (req, res) => {
+  try {
+    await authService.resendVerification(req.body.email);
+    return sendSuccess(
+      res,
+      {},
+      'إذا كان الحساب بانتظار التفعيل فقد أرسلنا رابطاً جديداً إلى بريده.'
+    );
+  } catch (error) {
+    return sendError(
+      res,
+      error.code || 'RESEND_FAILED',
       error.message,
       error.statusCode || 500
     );

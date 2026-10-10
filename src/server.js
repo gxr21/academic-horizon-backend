@@ -131,7 +131,7 @@ app.get('/api', (req, res) => {
 // ─── Frontend pages opened on the API host ──────────────────────────
 // While the domain still points at this service, links from emails
 // (e.g. /reset-password?token=...) land here. Send browsers to the real app.
-app.get(['/reset-password', '/forgot-password', '/login', '/signup'], (req, res, next) => {
+app.get(['/reset-password', '/verify-email', '/forgot-password', '/login', '/signup'], (req, res, next) => {
   if (req.accepts(['json', 'html']) !== 'html') return next();
   const target = getRedirectFrontendUrl(req.get('host'));
   return res.redirect(302, `${target}${req.originalUrl}`);

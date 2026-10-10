@@ -41,6 +41,18 @@ export const googleLoginSchema = z.object({
     .max(4096, 'Invalid Google credential'),
 });
 
+export const verifyEmailSchema = z.object({
+  token: z.string({ required_error: 'رمز التفعيل مطلوب' }).trim().min(16, 'رمز التفعيل غير صالح').max(256),
+});
+
+export const resendVerificationSchema = z.object({
+  email: z
+    .string({ required_error: 'Email is required' })
+    .trim()
+    .email('أدخل بريداً إلكترونياً صالحاً')
+    .toLowerCase(),
+});
+
 export const forgotPasswordSchema = z.object({
   email: z
     .string({ required_error: 'Email is required' })

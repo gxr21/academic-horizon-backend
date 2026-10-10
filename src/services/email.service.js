@@ -3,6 +3,7 @@ import { RESEND_API_KEY, RESEND_FROM_EMAIL } from '../config/env.js';
 import { getFrontendUrl } from '../config/frontend.js';
 import { buildProviderWelcomeEmail } from '../emails/providerWelcome.js';
 import { buildPasswordResetEmail } from '../emails/passwordReset.js';
+import { buildEmailVerificationEmail } from '../emails/emailVerification.js';
 
 const DEFAULT_FROM = 'الأفق الأكاديمي <onboarding@resend.dev>';
 
@@ -68,6 +69,37 @@ export const sendProviderWelcomeEmail = async ({ name, email, password }) => {
     return { sent: true, id: data?.id || null };
   } catch (error) {
     console.error('Resend welcome email failed:', error.message);
+    return { sent: false, reason: explainResendError(error.message) };
+  }
+};
+
+export const sendEmailVerificationEmail = async ({ name, email, verifyUrl }) => {
+  const resend = getResend();
+  if (!resend) {
+    console.warn('Resend is not configured (RESEND_API_KEY). Skipped verification email.');
+    return { sent: false, reason: 'أضف RESEND_API_KEY في ملف البيئة ثم أعد تشغيل السيرفر.' };
+  }
+
+  const { subject, html, text } = buildEmailVerificationEmail({ name, verifyUrl });
+
+  try {
+    const { data, error } = await resend.emails.send({
+      from: getFromAddress(),
+      to: [email],
+      subject,
+      html,
+      text,
+    });
+
+    if (error) {
+      console.error('Resend verification email failed:', error);
+      return { sent: false, reason: explainResendError(error.message) };
+    }
+
+    console.log(`📧 Verification email sent to ${email} (${data?.id || 'ok'})`);
+    return { sent: true, id: data?.id || null };
+  } catch (error) {
+    console.error('Resend verification email failed:', error.message);
     return { sent: false, reason: explainResendError(error.message) };
   }
 };

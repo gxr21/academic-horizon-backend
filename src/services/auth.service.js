@@ -6,8 +6,10 @@ import { JWT_SECRET, JWT_EXPIRES_IN } from '../config/env.js';
 import { getGoogleClientId } from '../config/google.js';
 import { getFrontendUrl } from '../config/frontend.js';
 import { notifyRole } from './notification.service.js';
-import { sendPasswordResetEmail } from './email.service.js';
+import { sendPasswordResetEmail, sendEmailVerificationEmail } from './email.service.js';
+import { assertRealEmail } from '../utils/emailGuard.js';
 import {
+  AppError,
   UnauthorizedError,
   ConflictError,
   ValidationError,
@@ -42,13 +44,36 @@ const getProviderEmailDomain = () => {
 /**
  * Register a new user.
  */
-export const register = async ({ name, email, password, role }) => {
-  // Check if user exists
-  const existingUser = await User.findOne({ email });
-  if (existingUser) {
-    throw new ConflictError('This email is already registered');
+const VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
+const VERIFICATION_COOLDOWN_MS = 60 * 1000;
+
+/**
+ * Create a fresh verification link for the account and email it.
+ * Skips sending when one went out less than a minute ago (stops mail bombing).
+ */
+const sendVerificationLink = async (user) => {
+  const sentAt = user.email_verification_sent_at;
+  if (sentAt && Date.now() - new Date(sentAt).getTime() < VERIFICATION_COOLDOWN_MS) {
+    return { sent: true, throttled: true };
   }
 
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  user.email_verification_token = hashResetToken(rawToken);
+  user.email_verification_expires = new Date(Date.now() + VERIFICATION_TTL_MS);
+  user.email_verification_sent_at = new Date();
+  await user.save({ validateBeforeSave: false });
+
+  const verifyUrl = `${getFrontendUrl()}/verify-email?token=${rawToken}`;
+  return sendEmailVerificationEmail({ name: user.name, email: user.email, verifyUrl });
+};
+
+const isAwaitingVerification = (user) =>
+  !!user.email_verification_required && !user.email_verified && !user.google_id;
+
+/**
+ * Register a new user. The account stays locked until the emailed link is opened.
+ */
+export const register = async ({ name, email, password, role }) => {
   // Provider email restriction
   if (role === 'provider') {
     const providerDomain = getProviderEmailDomain();
@@ -66,21 +91,96 @@ export const register = async ({ name, email, password, role }) => {
     );
   }
 
-  const user = await User.create({ name, email, password, role });
+  // Reject typos, throw-away inboxes and domains that cannot receive mail
+  await assertRealEmail(email);
 
-  // Let admins know a new account joined (shows up live in their dashboard)
-  await notifyRole('admin', {
-    type: 'new_user',
-    title: role === 'provider' ? 'مزود خدمة جديد' : 'طالب جديد',
-    message: `انضم ${name} (${email}) إلى المنصة.`,
-  });
+  const existingUser = await User.findOne({ email }).select('+google_id +email_verification_sent_at');
+  let user;
 
-  const token = generateToken(user);
+  if (existingUser) {
+    // Someone signed up with this address but never confirmed it. The real owner of the
+    // inbox may be trying now, so replace the old attempt instead of blocking them forever.
+    if (!isAwaitingVerification(existingUser)) {
+      throw new ConflictError('This email is already registered');
+    }
+    existingUser.name = name;
+    existingUser.password = password;
+    existingUser.role = role;
+    user = existingUser;
+  } else {
+    user = new User({
+      name,
+      email,
+      password,
+      role,
+      email_verified: false,
+      email_verification_required: true,
+    });
+  }
+
+  await user.save();
+  const mail = await sendVerificationLink(user);
 
   return {
-    token,
+    requiresVerification: true,
+    email: user.email,
+    emailSent: !!mail.sent,
+  };
+};
+
+/**
+ * Open the emailed link: proves the visitor owns the inbox, then signs them in.
+ */
+export const verifyEmail = async (token) => {
+  const user = await User.findOne({
+    email_verification_token: hashResetToken(String(token || '').trim()),
+    email_verification_expires: { $gt: new Date() },
+  }).select('+email_verification_token +email_verification_expires');
+
+  if (!user) {
+    throw new ValidationError(
+      'رابط التفعيل غير صالح أو منتهٍ. إذا فعّلت حسابك سابقاً فسجّل الدخول مباشرة، وإلا اطلب رابطاً جديداً.'
+    );
+  }
+
+  if (!user.is_active) {
+    throw new UnauthorizedError('Account is deactivated');
+  }
+
+  const wasPending = !user.email_verified;
+  user.email_verified = true;
+  user.email_verified_at = new Date();
+  user.email_verification_token = null;
+  user.email_verification_expires = null;
+  await user.save({ validateBeforeSave: false });
+
+  // Admins only hear about people who proved their email is real
+  if (wasPending) {
+    await notifyRole('admin', {
+      type: 'new_user',
+      title: user.role === 'provider' ? 'مزود خدمة جديد' : 'طالب جديد',
+      message: `انضم ${user.name} (${user.email}) إلى المنصة.`,
+    });
+  }
+
+  return {
+    token: generateToken(user),
     user: user.toJSON(),
   };
+};
+
+/**
+ * Always answers the same, so nobody can probe which emails are registered.
+ */
+export const resendVerification = async (email) => {
+  const user = await User.findOne({ email: String(email).trim().toLowerCase() }).select(
+    '+google_id +email_verification_sent_at'
+  );
+  if (!user || !user.is_active || !isAwaitingVerification(user)) {
+    return { queued: false };
+  }
+  const mail = await sendVerificationLink(user);
+  return { queued: !!mail.sent };
 };
 
 /**
@@ -88,7 +188,7 @@ export const register = async ({ name, email, password, role }) => {
  */
 export const login = async ({ email, password }) => {
   // Find user and include password for comparison
-  const user = await User.findOne({ email }).select('+password');
+  const user = await User.findOne({ email }).select('+password +google_id');
 
   if (!user) {
     throw new UnauthorizedError('Invalid email or password');
@@ -107,6 +207,15 @@ export const login = async ({ email, password }) => {
   const isMatch = await user.comparePassword(password);
   if (!isMatch) {
     throw new UnauthorizedError('Invalid email or password');
+  }
+
+  // Checked after the password so strangers cannot tell which emails exist
+  if (isAwaitingVerification(user)) {
+    throw new AppError(
+      'لم يتم تأكيد بريدك الإلكتروني بعد. افتح الرابط الذي أرسلناه إلى بريدك، أو اطلب رابطاً جديداً.',
+      403,
+      'EMAIL_NOT_VERIFIED'
+    );
   }
 
   const restriction = await evaluateRestriction(user);
@@ -155,7 +264,9 @@ export const loginWithGoogle = async ({ credential }) => {
   const email = payload.email.trim().toLowerCase();
   const googleId = payload.sub;
 
-  let user = await User.findOne({ $or: [{ google_id: googleId }, { email }] }).select('+google_id');
+  let user = await User.findOne({ $or: [{ google_id: googleId }, { email }] }).select(
+    '+google_id +password +email_verification_token +email_verification_expires'
+  );
   let isNew = false;
 
   if (!user) {
@@ -200,6 +311,13 @@ export const loginWithGoogle = async ({ credential }) => {
       changed = true;
     }
     if (!user.email_verified) {
+      // The password on an unconfirmed account may have been typed by a stranger who used
+      // this address, so drop it. The real owner can set their own via "forgot password".
+      if (user.email_verification_required && user.password) {
+        user.password = undefined;
+      }
+      user.email_verification_token = null;
+      user.email_verification_expires = null;
       user.email_verified = true;
       user.email_verified_at = new Date();
       changed = true;
@@ -287,6 +405,11 @@ export const resetPassword = async ({ token, password }) => {
   user.password = password;
   user.password_reset_token = null;
   user.password_reset_expires = null;
+  // Opening a link sent to the inbox proves the owner, so the email counts as confirmed
+  if (!user.email_verified) {
+    user.email_verified = true;
+    user.email_verified_at = new Date();
+  }
   await user.save();
 
   return { email: user.email };

@@ -7,6 +7,8 @@ import {
   forgotPassword,
   resetPassword,
   verifyResetToken,
+  verifyEmail,
+  resendVerification,
 } from '../controllers/auth.controller.js';
 import { authenticate } from '../middlewares/auth.middleware.js';
 import { validate } from '../middlewares/validate.middleware.js';
@@ -15,6 +17,8 @@ import {
   registerSchema,
   loginSchema,
   googleLoginSchema,
+  verifyEmailSchema,
+  resendVerificationSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
 } from '../validators/auth.validator.js';
@@ -29,6 +33,10 @@ router.post('/login', authLimiter, validate(loginSchema), login);
 
 // POST /api/auth/google — sign in / sign up with a Google ID token
 router.post('/google', authLimiter, validate(googleLoginSchema), googleLogin);
+
+// POST /api/auth/verify-email — open the emailed link (also signs the visitor in)
+router.post('/verify-email', authLimiter, validate(verifyEmailSchema), verifyEmail);
+router.post('/resend-verification', authLimiter, validate(resendVerificationSchema), resendVerification);
 
 // GET /api/auth/me
 router.get('/me', authenticate, getMe);
