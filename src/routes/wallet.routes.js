@@ -31,7 +31,7 @@ router.post(
   validate(withdrawalRequestSchema),
   async (req, res) => {
     try {
-      const withdrawal = await walletService.requestMastercardWithdrawal(req.user.id, req.body);
+      const withdrawal = await walletService.requestWithdrawal(req.user.id, req.body);
       return sendSuccess(res, { withdrawal }, 'تم إرسال طلب السحب إلى الإدارة', 201);
     } catch (error) {
       return sendError(res, error.code || 'WITHDRAW_FAILED', error.message, error.statusCode || 500);

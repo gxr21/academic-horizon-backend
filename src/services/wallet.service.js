@@ -11,6 +11,8 @@ import {
   isValidExpiry,
   maskCard,
   normalizeCardNumber,
+  normalizeIraqiWalletNumber,
+  WITHDRAWAL_METHODS,
 } from '../utils/mastercard.js';
 import { encryptCard, decryptCard } from '../utils/cardCrypto.js';
 import { notifyUsers, notifyRole } from './notification.service.js';
@@ -149,6 +151,7 @@ export const getProviderWallet = async (providerId) => {
     commissionPercent: settings.commission_percent,
     minWithdrawal: MIN_WITHDRAWAL_IQD,
     method: 'mastercard',
+    methods: Object.entries(WITHDRAWAL_METHODS).map(([id, label]) => ({ id, label })),
     transactions: transactions.map((row) => row.toJSON()),
     withdrawals: withdrawals.map((row) => row.toJSON()),
   };
@@ -180,7 +183,18 @@ export const getAdminFinance = async () => {
   };
 };
 
-export const requestMastercardWithdrawal = async (providerId, data) => {
+/** Short description of where the money goes, for notifications and notes. */
+const describeDestination = (withdrawal) =>
+  withdrawal.method === 'mastercard'
+    ? `ماستركارد ****${withdrawal.card_last4}`
+    : `${WITHDRAWAL_METHODS[withdrawal.method] || withdrawal.method} (${withdrawal.wallet_number})`;
+
+export const requestWithdrawal = async (providerId, data) => {
+  const method = data.method || 'mastercard';
+  if (!WITHDRAWAL_METHODS[method]) {
+    throw new ValidationError('طريقة السحب غير مدعومة');
+  }
+
   const amount = Math.round(Number(data.amount));
   if (!Number.isFinite(amount) || amount < MIN_WITHDRAWAL_IQD) {
     throw new ValidationError(`أقل مبلغ للسحب هو ${MIN_WITHDRAWAL_IQD} دينار`);
@@ -188,17 +202,29 @@ export const requestMastercardWithdrawal = async (providerId, data) => {
 
   const holder = String(data.cardHolderName || '').trim();
   if (holder.length < 3) {
-    throw new ValidationError('اكتب الاسم كما هو على بطاقة ماستركارد');
+    throw new ValidationError(
+      method === 'mastercard' ? 'اكتب الاسم كما هو على بطاقة ماستركارد' : 'اكتب اسم صاحب المحفظة'
+    );
   }
 
-  const cardNumber = normalizeCardNumber(data.cardNumber);
-  if (!isMastercardNumber(cardNumber)) {
-    throw new ValidationError('رقم البطاقة يجب أن يكون ماستركارد صالحاً');
-  }
+  let cardNumber = '';
+  let expiry = '';
+  let walletNumber = '';
 
-  const expiry = String(data.cardExpiry || '').trim();
-  if (expiry && !isValidExpiry(expiry)) {
-    throw new ValidationError('تاريخ الانتهاء بصيغة MM/YY');
+  if (method === 'mastercard') {
+    cardNumber = normalizeCardNumber(data.cardNumber);
+    if (!isMastercardNumber(cardNumber)) {
+      throw new ValidationError('رقم البطاقة يجب أن يكون ماستركارد صالحاً');
+    }
+    expiry = String(data.cardExpiry || '').trim();
+    if (expiry && !isValidExpiry(expiry)) {
+      throw new ValidationError('تاريخ الانتهاء بصيغة MM/YY');
+    }
+  } else {
+    walletNumber = normalizeIraqiWalletNumber(data.walletNumber);
+    if (!walletNumber) {
+      throw new ValidationError('اكتب رقم المحفظة بصيغة 07xxxxxxxxx');
+    }
   }
 
   const provider = await User.findOneAndUpdate(
@@ -215,11 +241,12 @@ export const requestMastercardWithdrawal = async (providerId, data) => {
     provider_id: providerId,
     amount,
     status: 'pending',
-    method: 'mastercard',
+    method,
     card_holder_name: holder,
-    card_last4: maskCard(cardNumber),
+    card_last4: method === 'mastercard' ? maskCard(cardNumber) : '',
     card_expiry: expiry,
-    card_encrypted: encryptCard(cardNumber),
+    card_encrypted: method === 'mastercard' ? encryptCard(cardNumber) : '',
+    wallet_number: walletNumber,
   });
 
   await WalletTransaction.create({
@@ -229,13 +256,13 @@ export const requestMastercardWithdrawal = async (providerId, data) => {
     amount,
     withdrawal_id: withdrawal._id,
     balance_after: provider.wallet_balance,
-    note: 'تم حجز المبلغ بانتظار تحويل ماستركارد من الإدارة',
+    note: `تم حجز المبلغ بانتظار تحويله من الإدارة إلى ${WITHDRAWAL_METHODS[method]}`,
   });
 
   await notifyRole(ROLES.ADMIN, {
     type: 'withdrawal_requested',
-    title: 'طلب سحب ماستركارد',
-    message: `${provider.name} طلب سحب ${amount} دينار إلى ماستركارد ****${maskCard(cardNumber)}.`,
+    title: `طلب سحب ${WITHDRAWAL_METHODS[method]}`,
+    message: `${provider.name} طلب سحب ${amount} دينار إلى ${describeDestination(withdrawal)}.`,
   });
 
   return withdrawal.toJSON();
@@ -285,7 +312,7 @@ export const reviewWithdrawal = async ({ withdrawalId, adminId, status, adminNot
       amount: 0,
       withdrawal_id: withdrawal._id,
       balance_after: provider?.wallet_balance ?? 0,
-      note: 'تم تحويل المبلغ إلى ماستركارد المزود',
+      note: `تم تحويل المبلغ إلى ${WITHDRAWAL_METHODS[withdrawal.method] || 'حساب المزود'}`,
     });
   }
 
@@ -294,7 +321,7 @@ export const reviewWithdrawal = async ({ withdrawalId, adminId, status, adminNot
     title: status === 'paid' ? 'تم تحويل السحب' : 'رُفض طلب السحب',
     message:
       status === 'paid'
-        ? `حُوّل ${withdrawal.amount} دينار إلى ماستركارد ****${withdrawal.card_last4}.`
+        ? `حُوّل ${withdrawal.amount} دينار إلى ${describeDestination(withdrawal)}.`
         : `رُفض سحب ${withdrawal.amount} دينار وأُعيد إلى محفظتك.${adminNote ? ` السبب: ${adminNote}` : ''}`,
   });
 
@@ -307,9 +334,12 @@ export const revealWithdrawalCard = async (withdrawalId) => {
   if (withdrawal.status !== 'pending') {
     throw new ForbiddenError('رقم البطاقة يُعرض فقط لطلبات السحب المعلقة');
   }
-  const cardNumber = decryptCard(withdrawal.card_encrypted);
+  const method = withdrawal.method || 'mastercard';
+  const cardNumber = method === 'mastercard' ? decryptCard(withdrawal.card_encrypted) : '';
   return {
     id: withdrawal._id.toString(),
+    method,
+    walletNumber: withdrawal.wallet_number || '',
     cardHolderName: withdrawal.card_holder_name,
     cardNumber,
     cardLast4: withdrawal.card_last4,
