@@ -13,6 +13,30 @@ export const registerChatHandlers = (io, socket) => {
    */
   const userMessageCount = new Map(); // `${userId}:${orderId}` → { count, resetAt }
 
+  /**
+   * Presence = being inside the conversation's room.
+   * A person with two tabs open stays "online" until the last tab leaves.
+   */
+  const userIdsInRoom = (roomName) => {
+    const ids = new Set();
+    const socketIds = io.sockets.adapter.rooms.get(roomName);
+    if (!socketIds) return ids;
+    for (const id of socketIds) {
+      const peer = io.sockets.sockets.get(id);
+      if (peer?.user?.id) ids.add(peer.user.id);
+    }
+    return ids;
+  };
+
+  // Call after this socket already left the room
+  const announceLeft = (roomName) => {
+    if (userIdsInRoom(roomName).has(socket.user.id)) return; // still here with another tab
+    io.to(roomName).emit('user_left', {
+      orderId: roomName.replace('order:', ''),
+      userId: socket.user.id,
+    });
+  };
+
   const checkRateLimit = (userId, orderId) => {
     const key = `${userId}:${orderId}`;
     const now = Date.now();
@@ -64,9 +88,10 @@ export const registerChatHandlers = (io, socket) => {
       const roomName = `order:${orderId}`;
 
       // Leave any previous rooms (except default)
-      for (const room of socket.rooms) {
-        if (room !== socket.id && room.startsWith('order:')) {
+      for (const room of [...socket.rooms]) {
+        if (room !== socket.id && room.startsWith('order:') && room !== roomName) {
           socket.leave(room);
+          announceLeft(room);
         }
       }
 
@@ -74,13 +99,17 @@ export const registerChatHandlers = (io, socket) => {
 
       console.log(`💬 ${socket.user.email} joined room ${roomName}`);
 
+      // Tell the newcomer who is already inside, so the header shows the right state at once
+      const others = [...userIdsInRoom(roomName)].filter((id) => id !== socket.user.id);
       socket.emit('room_joined', {
         orderId,
         message: 'Successfully joined room',
+        online: others,
       });
 
       // Notify others in the room
       socket.to(roomName).emit('user_joined', {
+        orderId,
         userId: socket.user.id,
         email: socket.user.email,
       });
@@ -94,14 +123,23 @@ export const registerChatHandlers = (io, socket) => {
    * leave_room — Leave a chat room.
    */
   socket.on('leave_room', ({ orderId }) => {
+    if (!orderId || !mongoose.isValidObjectId(orderId)) return;
     const roomName = `order:${orderId}`;
+    if (!socket.rooms.has(roomName)) return;
     socket.leave(roomName);
-
-    socket.to(roomName).emit('user_left', {
-      userId: socket.user.id,
-    });
+    announceLeft(roomName);
 
     console.log(`💬 ${socket.user.email} left room ${roomName}`);
+  });
+
+  // Closing the tab or losing the connection also means leaving every conversation.
+  // Rooms are already empty by the time "disconnect" fires, so remember them first.
+  let roomsAtDisconnect = [];
+  socket.on('disconnecting', () => {
+    roomsAtDisconnect = [...socket.rooms].filter((room) => room.startsWith('order:'));
+  });
+  socket.on('disconnect', () => {
+    for (const room of roomsAtDisconnect) announceLeft(room);
   });
 
   /**
