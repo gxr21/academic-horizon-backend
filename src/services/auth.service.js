@@ -288,7 +288,7 @@ const cleanDisplayName = (rawName, email) => {
  * Sign in (or sign up) with a Google ID token.
  * Google signs the token, so the email inside it is proven to belong to the visitor.
  */
-export const loginWithGoogle = async ({ credential }) => {
+export const loginWithGoogle = async ({ credential, role: requestedRole }) => {
   let payload;
   try {
     const ticket = await googleClient.verifyIdToken({
@@ -312,6 +312,24 @@ export const loginWithGoogle = async ({ credential }) => {
     '+google_id +password +email_verification_token +email_verification_expires'
   );
   let isNew = false;
+
+  // Signing in from the provider tab never creates an account and never signs in a non-provider
+  if (requestedRole === 'provider') {
+    if (!user) {
+      throw new AppError(
+        'لا يوجد حساب مزود خدمة بهذا البريد. سجّل كمزود خدمة من صفحة إنشاء الحساب، وسيراجع الأدمن طلبك.',
+        403,
+        'NOT_A_PROVIDER'
+      );
+    }
+    if (user.role !== 'provider') {
+      throw new AppError(
+        'هذا البريد غير مسجّل كمزود خدمة. استخدم تبويب «طالب» للدخول.',
+        403,
+        'NOT_A_PROVIDER'
+      );
+    }
+  }
 
   if (!user) {
     if (email.endsWith(getProviderEmailDomain())) {

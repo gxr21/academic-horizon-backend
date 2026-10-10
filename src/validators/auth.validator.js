@@ -45,6 +45,8 @@ export const googleLoginSchema = z.object({
     .trim()
     .min(20, 'Invalid Google credential')
     .max(4096, 'Invalid Google credential'),
+  // The tab the visitor used on the login page. Google may only create students.
+  role: z.enum(['student', 'provider']).optional(),
 });
 
 export const verifyEmailSchema = z.object({
