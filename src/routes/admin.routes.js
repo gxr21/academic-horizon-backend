@@ -16,7 +16,7 @@ import { sendSuccess, sendError, sendPaginated } from '../utils/response.js';
 import Report from '../models/Report.js';
 import * as reportService from '../services/report.service.js';
 import * as profileChangeService from '../services/profileChange.service.js';
-import { sendProviderWelcomeEmail } from '../services/email.service.js';
+import { sendProviderWelcomeEmail, sendProviderDecisionEmail } from '../services/email.service.js';
 import ProfileChangeRequest from '../models/ProfileChangeRequest.js';
 import Withdrawal from '../models/Withdrawal.js';
 import { getPlatformSettings } from '../services/wallet.service.js';
@@ -232,7 +232,7 @@ router.get('/stats', authenticate, authorize(ROLES.ADMIN), async (req, res) => {
   try {
     const [students, providers, statusRows, pendingReports, restrictedStudents, pendingProfileChanges, pendingWithdrawals, platform] = await Promise.all([
       User.countDocuments({ role: ROLES.STUDENT }),
-      User.countDocuments({ role: ROLES.PROVIDER }),
+      User.countDocuments({ role: ROLES.PROVIDER, approval_status: { $nin: ['pending', 'rejected'] } }),
       Order.aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]),
       Report.countDocuments({ status: 'pending' }),
       User.countDocuments({ role: ROLES.STUDENT, restriction_type: { $in: ['temporary', 'permanent'] } }),
@@ -322,6 +322,64 @@ router.post('/providers', authenticate, authorize(ROLES.ADMIN), validate(createP
     return sendError(res, 'CREATE_FAILED', error.message, 500);
   }
 });
+
+/**
+ * PATCH /api/admin/providers/:id/decision
+ * Admin only — approve or reject a provider who signed up by themselves.
+ */
+const providerDecisionSchema = z.object({
+  status: z.enum(['approved', 'rejected'], {
+    errorMap: () => ({ message: 'Status must be approved or rejected' }),
+  }),
+  note: z.string().trim().max(500).optional().default(''),
+});
+
+router.patch(
+  '/providers/:id/decision',
+  authenticate,
+  authorize(ROLES.ADMIN),
+  validate(providerDecisionSchema),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      if (!mongoose.isValidObjectId(id)) {
+        return sendError(res, 'INVALID_ID', `Invalid user id: ${id}`, 400);
+      }
+      const provider = await User.findById(id);
+      if (!provider || provider.role !== ROLES.PROVIDER) {
+        return sendError(res, 'NOT_FOUND', 'Provider not found', 404);
+      }
+      if ((provider.approval_status || 'approved') === 'approved') {
+        return sendError(res, 'ALREADY_APPROVED', 'هذا المزود معتمد بالفعل', 409);
+      }
+      if (!provider.email_verified) {
+        return sendError(res, 'EMAIL_NOT_VERIFIED', 'لم يؤكد المزود بريده الإلكتروني بعد', 400);
+      }
+
+      const { status, note } = req.body;
+      provider.approval_status = status;
+      provider.approval_note = status === 'rejected' ? note : '';
+      provider.approval_decided_at = new Date();
+      await provider.save({ validateBeforeSave: false });
+
+      const mail = await sendProviderDecisionEmail({
+        name: provider.name,
+        email: provider.email,
+        approved: status === 'approved',
+        note,
+      });
+
+      const label = status === 'approved' ? 'تمت الموافقة على المزود' : 'تم رفض طلب المزود';
+      return sendSuccess(
+        res,
+        { user: provider.toJSON(), emailSent: mail.sent },
+        mail.sent ? `${label} وأُبلغ عبر بريده` : `${label}، لكن تعذر إرسال البريد إليه`
+      );
+    } catch (error) {
+      return sendError(res, 'DECISION_FAILED', error.message, 500);
+    }
+  }
+);
 
 const updateUserSchema = z.object({
   name: z.string().trim().min(3).max(50).optional(),

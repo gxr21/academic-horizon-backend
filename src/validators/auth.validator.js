@@ -20,6 +20,12 @@ export const registerSchema = z.object({
       errorMap: () => ({ message: 'Role must be student or provider' }),
     })
     .default('student'),
+  // Only used by providers, who must give a way to be reached
+  phone: z.string().trim().max(30, 'Phone must be at most 30 characters').optional().default(''),
+  bio: z.string().trim().max(1000, 'Bio must be at most 1000 characters').optional().default(''),
+}).refine((data) => data.role !== 'provider' || data.phone.length >= 8, {
+  message: 'رقم الهاتف مطلوب لمزود الخدمة',
+  path: ['phone'],
 });
 
 export const loginSchema = z.object({

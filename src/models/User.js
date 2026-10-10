@@ -74,6 +74,23 @@ const userSchema = new mongoose.Schema(
       select: false,
       default: null,
     },
+    // Providers who sign up themselves wait here until an admin decides.
+    // Every other account (and all older ones) is simply "approved".
+    approval_status: {
+      type: String,
+      enum: ['approved', 'pending', 'rejected'],
+      default: 'approved',
+    },
+    approval_note: {
+      type: String,
+      trim: true,
+      maxlength: [500, 'Approval note must be at most 500 characters'],
+      default: '',
+    },
+    approval_decided_at: {
+      type: Date,
+      default: null,
+    },
     role: {
       type: String,
       enum: {
@@ -188,6 +205,11 @@ const userSchema = new mongoose.Schema(
         ret.emailVerifiedAt = doc.email_verified_at || null;
         delete ret.email_verified;
         delete ret.email_verified_at;
+        ret.approvalStatus = doc.approval_status || 'approved';
+        ret.approvalNote = doc.approval_note || '';
+        delete ret.approval_status;
+        delete ret.approval_note;
+        delete ret.approval_decided_at;
         delete ret.google_id;
         delete ret.email_verification_required;
         delete ret.email_verification_token;

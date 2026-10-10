@@ -73,16 +73,10 @@ const isAwaitingVerification = (user) =>
 /**
  * Register a new user. The account stays locked until the emailed link is opened.
  */
-export const register = async ({ name, email, password, role }) => {
-  // Provider email restriction
-  if (role === 'provider') {
-    const providerDomain = getProviderEmailDomain();
-    if (!email.endsWith(providerDomain)) {
-      throw new ValidationError(
-        `Providers must use an official email (ending with ${providerDomain})`
-      );
-    }
-  }
+export const register = async ({ name, email, password, role, phone = '', bio = '' }) => {
+  // Providers do not need a special email domain any more: after they confirm their
+  // email, an admin has to approve the account before it can sign in.
+  const isProvider = role === 'provider';
 
   // Students cannot use provider emails
   if (role === 'student' && email.endsWith(getProviderEmailDomain())) {
@@ -106,6 +100,9 @@ export const register = async ({ name, email, password, role }) => {
     existingUser.name = name;
     existingUser.password = password;
     existingUser.role = role;
+    existingUser.phone = isProvider ? phone : '';
+    existingUser.bio = isProvider ? bio : '';
+    existingUser.approval_status = isProvider ? 'pending' : 'approved';
     user = existingUser;
   } else {
     user = new User({
@@ -113,6 +110,9 @@ export const register = async ({ name, email, password, role }) => {
       email,
       password,
       role,
+      phone: isProvider ? phone : '',
+      bio: isProvider ? bio : '',
+      approval_status: isProvider ? 'pending' : 'approved',
       email_verified: false,
       email_verification_required: true,
     });
@@ -123,10 +123,39 @@ export const register = async ({ name, email, password, role }) => {
 
   return {
     requiresVerification: true,
+    needsApproval: isProvider,
     email: user.email,
     emailSent: !!mail.sent,
   };
 };
+
+const PENDING_APPROVAL_MESSAGE =
+  'تم تأكيد بريدك، وحسابك كمزود خدمة بانتظار موافقة الإدارة. سنراسلك على بريدك فور اتخاذ القرار.';
+
+/**
+ * Providers only get in after an admin approved them.
+ */
+const assertApproved = (user) => {
+  if (user.role !== 'provider') return;
+  if (user.approval_status === 'pending') {
+    throw new AppError(PENDING_APPROVAL_MESSAGE, 403, 'ACCOUNT_PENDING_APPROVAL');
+  }
+  if (user.approval_status === 'rejected') {
+    const reason = user.approval_note ? ` السبب: ${user.approval_note}` : '';
+    throw new AppError(
+      `تم رفض طلب انضمامك كمزود خدمة.${reason} للاستفسار تواصل مع الإدارة.`,
+      403,
+      'ACCOUNT_REJECTED'
+    );
+  }
+};
+
+const notifyAdminsOfProviderRequest = (user) =>
+  notifyRole('admin', {
+    type: 'new_user',
+    title: 'طلب انضمام مزود خدمة',
+    message: `${user.name} (${user.email}) يطلب الانضمام كمزود خدمة وبريده مؤكد. راجع الطلب في «إدارة مزودي الخدمة».`,
+  });
 
 /**
  * Open the emailed link: proves the visitor owns the inbox, then signs them in.
@@ -156,11 +185,24 @@ export const verifyEmail = async (token) => {
 
   // Admins only hear about people who proved their email is real
   if (wasPending) {
-    await notifyRole('admin', {
-      type: 'new_user',
-      title: user.role === 'provider' ? 'مزود خدمة جديد' : 'طالب جديد',
-      message: `انضم ${user.name} (${user.email}) إلى المنصة.`,
-    });
+    if (user.role === 'provider' && user.approval_status === 'pending') {
+      await notifyAdminsOfProviderRequest(user);
+    } else {
+      await notifyRole('admin', {
+        type: 'new_user',
+        title: user.role === 'provider' ? 'مزود خدمة جديد' : 'طالب جديد',
+        message: `انضم ${user.name} (${user.email}) إلى المنصة.`,
+      });
+    }
+  }
+
+  // Providers wait for the admin: confirm the email, but no session yet
+  if (user.role === 'provider' && user.approval_status !== 'approved') {
+    return {
+      pendingApproval: true,
+      message: PENDING_APPROVAL_MESSAGE,
+      user: user.toJSON(),
+    };
   }
 
   return {
@@ -217,6 +259,8 @@ export const login = async ({ email, password }) => {
       'EMAIL_NOT_VERIFIED'
     );
   }
+
+  assertApproved(user);
 
   const restriction = await evaluateRestriction(user);
   if (restriction.restricted) {
@@ -321,8 +365,14 @@ export const loginWithGoogle = async ({ credential }) => {
       user.email_verified = true;
       user.email_verified_at = new Date();
       changed = true;
+      if (user.role === 'provider' && user.approval_status === 'pending') {
+        await notifyAdminsOfProviderRequest(user);
+      }
     }
     if (changed) await user.save({ validateBeforeSave: false });
+
+    // Google proves the email, but a provider still needs the admin's approval
+    assertApproved(user);
   }
 
   return {
@@ -400,6 +450,11 @@ export const resetPassword = async ({ token, password }) => {
 
   if (!user) {
     throw new ValidationError(INVALID_RESET_MESSAGE);
+  }
+
+  // A pending provider confirming the email here still has to wait for the admin
+  if (!user.email_verified && user.role === 'provider' && user.approval_status === 'pending') {
+    await notifyAdminsOfProviderRequest(user);
   }
 
   user.password = password;
