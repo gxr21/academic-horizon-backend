@@ -129,6 +129,27 @@ export const register = async ({ name, email, password, role, phone = '', bio = 
   };
 };
 
+/**
+ * The login page has a student gate and a provider gate; each account must use its own.
+ * (Admins have no gate of their own and may use the student one.)
+ */
+const assertRightGate = (user, requestedRole) => {
+  if (requestedRole === 'provider' && user.role !== 'provider') {
+    throw new AppError(
+      'هذا الحساب غير مسجّل كمزود خدمة. استخدم تبويب «طالب» للدخول.',
+      403,
+      'WRONG_GATE'
+    );
+  }
+  if (requestedRole === 'student' && user.role === 'provider') {
+    throw new AppError(
+      'هذا حساب مزود خدمة. استخدم تبويب «مقدم خدمة» للدخول.',
+      403,
+      'WRONG_GATE'
+    );
+  }
+};
+
 const PENDING_APPROVAL_MESSAGE =
   'تم تأكيد بريدك، وحسابك كمزود خدمة بانتظار موافقة الإدارة. سنراسلك على بريدك فور اتخاذ القرار.';
 
@@ -253,13 +274,7 @@ export const login = async ({ email, password, role: requestedRole }) => {
 
   // Checked after the password so strangers cannot tell which emails exist.
   // The provider tab only admits provider accounts.
-  if (requestedRole === 'provider' && user.role !== 'provider') {
-    throw new AppError(
-      'هذا الحساب غير مسجّل كمزود خدمة. استخدم تبويب «طالب» للدخول.',
-      403,
-      'NOT_A_PROVIDER'
-    );
-  }
+  assertRightGate(user, requestedRole);
 
   if (isAwaitingVerification(user)) {
     throw new AppError(
@@ -322,23 +337,15 @@ export const loginWithGoogle = async ({ credential, role: requestedRole }) => {
   );
   let isNew = false;
 
-  // Signing in from the provider tab never creates an account and never signs in a non-provider
-  if (requestedRole === 'provider') {
-    if (!user) {
-      throw new AppError(
-        'لا يوجد حساب مزود خدمة بهذا البريد. سجّل كمزود خدمة من صفحة إنشاء الحساب، وسيراجع الأدمن طلبك.',
-        403,
-        'NOT_A_PROVIDER'
-      );
-    }
-    if (user.role !== 'provider') {
-      throw new AppError(
-        'هذا البريد غير مسجّل كمزود خدمة. استخدم تبويب «طالب» للدخول.',
-        403,
-        'NOT_A_PROVIDER'
-      );
-    }
+  // Each kind of account has its own gate. The provider tab never creates an account.
+  if (requestedRole === 'provider' && !user) {
+    throw new AppError(
+      'لا يوجد حساب مزود خدمة بهذا البريد. سجّل كمزود خدمة من صفحة إنشاء الحساب، وسيراجع الأدمن طلبك.',
+      403,
+      'NOT_A_PROVIDER'
+    );
   }
+  if (user) assertRightGate(user, requestedRole);
 
   if (!user) {
     if (email.endsWith(getProviderEmailDomain())) {
