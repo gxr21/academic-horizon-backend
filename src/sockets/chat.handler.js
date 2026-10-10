@@ -30,7 +30,11 @@ export const registerChatHandlers = (io, socket) => {
 
   // Call after this socket already left the room
   const announceLeft = (roomName) => {
-    if (userIdsInRoom(roomName).has(socket.user.id)) return; // still here with another tab
+    if (userIdsInRoom(roomName).has(socket.user.id)) {
+      // still here with another tab / connection, so the other side keeps seeing them online
+      console.log(`💬 ${socket.user.email} left ${roomName} but is still inside through another connection`);
+      return;
+    }
     io.to(roomName).emit('user_left', {
       orderId: roomName.replace('order:', ''),
       userId: socket.user.id,
